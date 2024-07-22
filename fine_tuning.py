@@ -19,13 +19,10 @@ def tokenize_function(examples: datasets.arrow_dataset.Dataset):
         tokenized_dataset (datasets.arrow_dataset.Dataset): Tokenized dataset
     """
     return tokenizer(examples['text'], max_length=512, padding='max_length', truncation=True)
-
-
+ 
 MODEL_PATH = 'microsoft/phi-2'
 TUNED_MODEL_PATH = 'models/peft_phi_2'
 USE_RAG = True
-
-# Config to load model with a 4-bit quantization
 bnb_config = BitsAndBytesConfig(load_in_4bit=True,
                                 bnb_4bit_quant_type='nf4',
                                 bnb_4bit_compute_dtype='float16',
@@ -39,8 +36,9 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH,
 tokenizer.pad_token = tokenizer.eos_token
 
 # Read data
-train = pd.read_json('data/TeleQnA_training.txt').T
-labels = pd.read_csv('data/Q_A_ID_training.csv')
+# Read data
+train = pd.read_json('/teamspace/studios/this_studio/Data/TeleQnA_training.txt').T
+labels = pd.read_csv('/teamspace/studios/this_studio/Data/Q_A_ID_training.csv')
 
 # Create question ID column (question number)
 train['Question_ID'] = train.index.str.split(' ').str[-1].astype('int')

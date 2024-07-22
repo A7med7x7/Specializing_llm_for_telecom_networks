@@ -11,7 +11,7 @@ import chromadb
 
 from utils import remove_release_number, llm_inference, get_results_with_labels, create_empty_directory
 
-torch.set_default_device("cuda")
+#torch.set_default_device("cuda")
 
 MODEL_USED = 'Phi-2'
 USE_REPO_MODEL = True  # use fine-tuned model from repo (models/peft_phi_2_repo)
@@ -21,24 +21,26 @@ DO_TRAIN_INFERENCE = True  # do train inference (True) or only test inference (F
 PERFORM_RAG = True
 
 if USE_REPO_MODEL:
-    model_path = 'models/peft_phi_2_repo'
+    model_path = '/teamspace/studios/this_studio/phi-2'
 elif USE_LOCAL_FINE_TUNED:
-    model_path = 'models/peft_phi_2'
+    model_path = '/teamspace/studios/this_studio/phi-2'
 else:
-    model_path = 'microsoft/phi-2'
+    model_path = '/teamspace/studios/this_studio/phi-2'
 
 # Read PHI-2 model and tokenizer
 model = AutoModelForCausalLM.from_pretrained(model_path,
-                                             torch_dtype="auto",
-                                             trust_remote_code=True)
+                                             torch_dtype=torch.float32,
+                                             trust_remote_code=True).to('cpu')
+
 tokenizer = AutoTokenizer.from_pretrained('microsoft/phi-2',
                                           trust_remote_code=True)
 
+model.to('cpu')
 # Read data
-train = pd.read_json('data/TeleQnA_training.txt').T
-labels = pd.read_csv('data/Q_A_ID_training.csv')
-test = pd.read_json('data/TeleQnA_testing1.txt').T
-test_new = pd.read_json('data/questions_new.txt').T
+train = pd.read_json('/teamspace/studios/this_studio/Data/TeleQnA_training.txt').T
+labels = pd.read_csv('/teamspace/studios/this_studio/Data/Q_A_ID_training.csv')
+test = pd.read_json('/teamspace/studios/this_studio/Data/TeleQnA_testing1.txt').T
+test_new = pd.read_json('/teamspace/studios/this_studio/Data/questions_new.txt').T
 # Merge test with additional questions from test_new
 test = pd.concat([test, test_new])
 
@@ -94,8 +96,9 @@ if PERFORM_RAG:
     results_test, _ = llm_inference(test, model, tokenizer, PERFORM_RAG, query_engine, top_k)
 else:
     results_test, _ = llm_inference(test, model, tokenizer)
-
-results_test = results_test.astype('int')
+results_test.replace('Unknown', -1, inplace=True)
+results_test['Answer_ID'] = results_test['Answer_ID'].astype(int)
+#results_test = results_test.astype('int')
 results_test['Task'] = MODEL_USED
 # Save test results
 results_test.to_csv(f'results/{today_date}_{MODEL_USED}_test_results.csv', index=False)

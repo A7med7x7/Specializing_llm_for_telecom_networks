@@ -8,10 +8,7 @@ import chromadb
 import pandas as pd
 import re
 from tqdm import tqdm
-
 from utils import create_dir_with_sampled_docs, remove_release_number, create_empty_directory
-
-
 def rag_inference_on_train(data: pd.DataFrame,
                            engine: RetrieverQueryEngine):
     """
@@ -47,8 +44,8 @@ def rag_inference_on_train(data: pd.DataFrame,
     context_all_train_df.to_pickle('results/context_all_train.pkl')
 
 
-DOCS_PATH = 'data/rel18'
-VECTOR_PATH = 'data/rag_vector/index'
+DOCS_PATH = '/teamspace/studios/this_studio/rel18'
+VECTOR_PATH = '/teamspace/studios/this_studio/rag_vector/index'
 SAMPLE_DOCS = False
 RAG_INFERENCE = True
 
@@ -61,7 +58,7 @@ Settings.chunk_overlap = 20
 # Read documents
 if SAMPLE_DOCS:
     # Read sampled documents
-    SAMPLED_DOCS_PATH = 'data/sampled_rel18'
+    SAMPLED_DOCS_PATH = '/teamspace/studios/this_studio/rel18'
     SAMPLE_FRAC = 0.5
     create_dir_with_sampled_docs(DOCS_PATH,
                                  SAMPLED_DOCS_PATH,
@@ -90,7 +87,7 @@ if RAG_INFERENCE:
     query_engine = RetrieverQueryEngine(retriever=retriever,
                                         node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.5)])
     # Read train data
-    train = pd.read_json('data/TeleQnA_training.txt').T
+    train = pd.read_json('/teamspace/studios/this_studio/Data/TeleQnA_training.txt').T
     # Get question ID column (a number of the question)
     train['Question_ID'] = train.index.str.split(' ').str[-1]
     # Remove [3GPP Release <number>] from question

@@ -4,10 +4,12 @@ from pathlib import Path
 import os
 import shutil
 from tqdm import tqdm
+import torch 
 from transformers.models.phi.modeling_phi import PhiForCausalLM
 from transformers.models.codegen.tokenization_codegen_fast import CodeGenTokenizerFast
 from peft.peft_model import PeftModelForCausalLM
 from llama_index.core.query_engine.retriever_query_engine import RetrieverQueryEngine
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def remove_release_number(data: pd.DataFrame,
@@ -24,7 +26,6 @@ def remove_release_number(data: pd.DataFrame,
     data[column] = [re.findall('(.*?)(?:\s+\[3GPP Release \d+]|$)', x)[0] for x in data[column]]
     return data
 
-
 def get_option_5(row: pd.Series) -> str:
     """
     Retrieve option 5 if available. Otherwise, create an empty string.
@@ -40,7 +41,6 @@ def get_option_5(row: pd.Series) -> str:
     else:
         option_5 = f'E) {option_5}'
     return option_5
-
 
 def encode_answer(answer: str | int,
                   encode_letter: bool = True) -> int | str:
@@ -95,7 +95,6 @@ def rag(row: pd.Series,
     context = re.sub('\s+', ' ', context)
     return context
 
-
 def generate_prompt(row: pd.Series,
                     context: str) -> str:
     """
@@ -119,82 +118,59 @@ def generate_prompt(row: pd.Series,
     Answer:
     """
     return prompt
-
+#model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float32, trust_remote_code=True).to('cpu')
 
 def llm_inference(data: pd.DataFrame,
-                  model: PhiForCausalLM | PeftModelForCausalLM,
-                  tokenizer: CodeGenTokenizerFast,
+                  model: AutoModelForCausalLM,
+                  tokenizer: AutoTokenizer,
                   perform_rag: bool = False,
                   query_eng: RetrieverQueryEngine = None,
                   top_k: int = 0,
                   show_prompts: bool = False,
                   store_wrong: bool = False) -> tuple[pd.DataFrame, list]:
-    """
-    Perform LLM inference.
-
-    Args:
-        data (pd.DataFrame): A DataFrame with data about questions and their options
-        model (PhiForCausalLM | PeftModelForCausalLM): Model used for inference
-        tokenizer (CodeGenTokenizerFast): Model tokenizer
-        perform_rag (bool): Use context from RAG in prompt (True) or not (False). Defaults to False
-        query_eng (RetrieverQueryEngine): RAG query engine. Defaults to None
-        top_k (int): Number of chunks in context from RAG. Defaults to 0
-        show_prompts (bool): Show all generated prompts (True) or not (False). Defaults to False
-        store_wrong (bool): Store questions with not allowed answers (True) or not (False). Defaults to False
-    Returns:
-        answers (pd.DataFrame): A DataFrame with question IDs and answer IDs
-        wrong_format (list): Question ID - Answer ID pairs with improper LLM answers
-    """
     answers = []
     wrong_format = []
-    # Iterate over different rows
-    for _, question in tqdm(data.iterrows()):
-        if perform_rag:
-            prompt_context = rag(question,
-                                 query_eng,
-                                 top_k)
-        else:
-            prompt_context = ''
-        prompt = generate_prompt(question, prompt_context)
-        if show_prompts:
-            print(f"\n{question['Question_ID']}")
-            print(prompt)
-        inputs = tokenizer(prompt, return_tensors="pt", return_attention_mask=False)
-        # Generate only one new character. It should be our answer
-        outputs = model.generate(**inputs, max_length=inputs[0].__len__()+1, pad_token_id=tokenizer.eos_token_id)
-        answer_letter = tokenizer.batch_decode(outputs)[0][len(prompt):len(prompt)+1]
-        # Encode letter to number
+    
+    for _, question in tqdm(data.iterrows(), total=len(data)):
         try:
-            answer = encode_answer(answer_letter)
-        except:
-            try:
-                print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Checking if it \
-wasn't because of spaces...")
-                # Get some more output
-                outputs = model.generate(**inputs, max_length=inputs[0].__len__()+4, pad_token_id=tokenizer.eos_token_id)
-                print(f'Full output:\n{tokenizer.batch_decode(outputs)[0]}')
-                answer_letter = tokenizer.batch_decode(outputs)[0][len(prompt)-5:len(prompt)+5]
-                # Find answer in the generated output
-                answer_letter = re.findall('(A|B|C|D|E)\)', answer_letter)[0]
+            if perform_rag:
+                prompt_context = rag(question, query_eng, top_k)
+            else:
+                prompt_context = ''
+            
+            prompt = generate_prompt(question, prompt_context)
+            if show_prompts:
+                print(f"\n{question['Question_ID']}")
+                print(prompt)
+            
+            inputs = tokenizer(prompt, return_tensors="pt", return_attention_mask=True)
+
+            # Ensure inputs are tensors and of type torch.long
+            inputs = {key: tensor.to(torch.long) for key, tensor in inputs.items()}
+
+            # Adjust max_length to accommodate input length
+            max_length = max(len(inputs['input_ids'][0]) + 20, 50)  # Example adjustment, you can adjust according to your needs
+            
+            with torch.no_grad():
+                outputs = model.generate(**inputs, max_length=max_length, pad_token_id=model.config.pad_token_id)
+                answer_letter = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0][len(prompt):len(prompt)+1]
+                print(f"Generated Answer: {answer_letter}")  # Add this line to print generated answer letter
                 answer = encode_answer(answer_letter)
-                print(f'New answer: {answer}')
-            except:
-                print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Changing answer to 1")
-                answer = 1
-                # Generate more characters to check what is created with the model
-                outputs = model.generate(**inputs, max_length=inputs[0].__len__()+20, pad_token_id=tokenizer.eos_token_id)
-                answer_letter = tokenizer.batch_decode(outputs)[0]
-                print(answer_letter)
-                if store_wrong:
-                    wrong_format.append([question['Question_ID'], answer_letter])
-        answers.append([question['Question_ID'], answer])
-    # Create a DataFrame with answers
-    answers = pd.DataFrame(answers, columns=['Question_ID', 'Answer_ID'])
-    return answers, wrong_format
+            
+            answers.append([question['Question_ID'], answer])
+        
+        except Exception as e:
+            print(f"Error occurred: {e}")
+            if store_wrong:
+                wrong_format.append([question['Question_ID'], str(e)])
+            else:
+                answers.append([question['Question_ID'], 'Unknown'])
+    
+    answers_df = pd.DataFrame(answers, columns=['Question_ID', 'Answer_ID'])
+    return answers_df, wrong_format
 
 
-def get_results_with_labels(results_df,
-                            labels_df) -> tuple[pd.DataFrame, float]:
+def get_results_with_labels(results_df, labels_df) -> tuple[pd.DataFrame, float]:
     """
     Merge results with ground truth labels.
 
@@ -212,15 +188,18 @@ def get_results_with_labels(results_df,
     # Transform question ID column to the same format as in labels
     results_df['Question_ID'] = results_df['Question_ID'].astype('int')
     # Merge columns
-    results_labels = pd.merge(labels_df,
-                              results_df,
-                              how='left',
-                              on='Question_ID')
-    # Get accuracy of predictions
-    train_acc = 100 * (results_labels['Answer_ID'] == results_labels['Prediction_ID']).sum() / len(results_labels)
+    results_labels = pd.merge(labels_df, results_df, how='left', on='Question_ID')
+    
+    # Replace 'Unknown' with NaN in 'Prediction_ID' column
+    results_labels['Prediction_ID'] = pd.to_numeric(results_labels['Prediction_ID'], errors='coerce')
+    results_labels['Prediction_ID'].fillna('Unknown', inplace=True)
+    
+    # Get accuracy of predictions, ignoring 'Unknown' values for accuracy calculation
+    valid_predictions = results_labels[results_labels['Prediction_ID'] != 'Unknown']
+    train_acc = 100 * (valid_predictions['Answer_ID'] == valid_predictions['Prediction_ID']).sum() / len(valid_predictions)
     print(f'Train accuracy: {train_acc}%')
+    
     return results_labels, train_acc
-
 
 def create_empty_directory(path: str):
     """
